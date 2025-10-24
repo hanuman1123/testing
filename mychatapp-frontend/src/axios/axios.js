@@ -1,7 +1,7 @@
 import axios from "axios";
 
 const API = axios.create({
-  baseURL: "testing-8yiu.vercel.app/api", // backend URL
+  baseURL: "https://testing-8yiu.vercel.app/api", // backend URL
   withCredentials: true,                // send HttpOnly cookies
 });
 
