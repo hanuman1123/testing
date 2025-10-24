@@ -6,39 +6,59 @@ import cors from "cors";
 import dotenv from "dotenv";
 import connectDb from "./db/db.js";
 import User from "./model/user.model.js";
+import bcrypt from "bcryptjs";
 
 dotenv.config();
+
+// Connect to MongoDB
 connectDb();
 
 const app = express();
 app.use(express.json());
 app.use(cookieParser());
+
+// CORS configuration
+const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:5173";
 app.use(
   cors({
-    origin: "http://localhost:5173", // your frontend URL
+    origin: FRONTEND_URL,
     credentials: true,
   })
 );
 
 const JWT_SECRET = process.env.JWT_SECRET;
 
-// Helper functions
+// Helper functions for JWT
 const createAccessToken = (user) =>
-  jwt.sign({ id: user._id, username: user.username }, JWT_SECRET, { expiresIn: "15m" });
+  jwt.sign({ id: user._id, username: user.username }, JWT_SECRET, {
+    expiresIn: "15m",
+  });
+
 const createRefreshToken = (user) =>
-  jwt.sign({ id: user._id, username: user.username }, JWT_SECRET, { expiresIn: "7d" });
+  jwt.sign({ id: user._id, username: user.username }, JWT_SECRET, {
+    expiresIn: "7d",
+  });
+
+// ======================== ROUTES ======================== //
 
 // Register
 app.post("/api/register", async (req, res) => {
   try {
     const { username, password } = req.body;
-    const existingUser = await User.findOne({ username });
-    if (existingUser) return res.status(400).json({ message: "User already exists" });
 
-    const user = new User({ username, password });
+    // Check if user exists
+    const existingUser = await User.findOne({ username });
+    if (existingUser)
+      return res.status(400).json({ message: "User already exists" });
+
+    // Hash password
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    // Create user
+    const user = new User({ username, password: hashedPassword });
     await user.save();
 
-    res.json({ message: "User registered successfully" });
+    res.status(201).json({ message: "User registered successfully" });
   } catch (error) {
     console.error(error);
     res.status(500).json({ message: "Server error" });
@@ -49,25 +69,36 @@ app.post("/api/register", async (req, res) => {
 app.post("/api/login", async (req, res) => {
   try {
     const { username, password } = req.body;
-    const user = await User.findOne({ username });
-    if (!user || user.password !== password)
-      return res.status(401).json({ message: "Invalid credentials" });
 
+    // Find user
+    const user = await User.findOne({ username });
+    if (!user)
+      return res.status(401).json({ message: "Invalid username or password" });
+
+    // Compare passwords
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch)
+      return res.status(401).json({ message: "Invalid username or password" });
+
+    // Generate tokens
     const accessToken = createAccessToken(user);
     const refreshToken = createRefreshToken(user);
 
+    // Set cookies
+    const isProduction = process.env.NODE_ENV === "production";
+
     res.cookie("accessToken", accessToken, {
       httpOnly: true,
-      secure: false,
-      sameSite: "lax",
-      maxAge: 15 * 60 * 1000,
+      secure: isProduction,
+      sameSite: isProduction ? "none" : "lax",
+      maxAge: 15 * 60 * 1000, // 15 minutes
     });
 
     res.cookie("refreshToken", refreshToken, {
       httpOnly: true,
-      secure: false,
-      sameSite: "lax",
-      maxAge: 7 * 24 * 60 * 60 * 1000,
+      secure: isProduction,
+      sameSite: isProduction ? "none" : "lax",
+      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
     });
 
     res.json({ message: "Login successful" });
@@ -85,6 +116,7 @@ app.get("/api/profile", async (req, res) => {
 
     const decoded = jwt.verify(token, JWT_SECRET);
     const user = await User.findById(decoded.id).select("-password");
+
     res.json({ message: "Access granted", user });
   } catch (error) {
     res.status(401).json({ message: "Invalid or expired token" });
@@ -99,6 +131,7 @@ app.post("/api/logout", (req, res) => {
 });
 
 // Start server
-app.listen(process.env.PORT, () => {
-  console.log(`🚀 Server running on port ${process.env.PORT}`);
+const PORT = process.env.PORT || 4000;
+app.listen(PORT, () => {
+  console.log(`🚀 Server running on port ${PORT}`);
 });
